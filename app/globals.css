@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Merriweather:wght@300;400;700&display=swap');
+
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  
+  body {
+    @apply bg-gradient-to-br from-enlightenment-50 to-primary-50 min-h-screen;
+  }
+}
+
+@layer components {
+  .enlightenment-card {
+    @apply bg-white/80 backdrop-blur-sm border border-enlightenment-200 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02];
+  }
+  
+  .enlightenment-button {
+    @apply bg-gradient-to-r from-enlightenment-400 to-enlightenment-500 hover:from-enlightenment-500 hover:to-enlightenment-600 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105;
+  }
+  
+  .enlightenment-input {
+    @apply w-full px-4 py-3 border border-enlightenment-200 rounded-xl focus:ring-2 focus:ring-enlightenment-400 focus:border-transparent transition-all duration-200 bg-white/80 backdrop-blur-sm;
+  }
+}
