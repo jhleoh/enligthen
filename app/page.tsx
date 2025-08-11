@@ -1,14 +1,17 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase'
 import { Database } from '@/lib/supabase'
-import { Lightbulb, Plus, Heart, User, Calendar, Tag } from 'lucide-react'
+import { Lightbulb, Plus, Heart, User, Calendar, Tag, LogIn, LogOut } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
+import { useAuth } from '@/lib/auth-context'
+import { UserProfile } from '@/components/user-profile'
 
 type Epiphany = Database['public']['Tables']['epiphanies']['Row']
 
 export default function Dashboard() {
+  const { user, signInWithGoogle, signOut } = useAuth()
   const [epiphanies, setEpiphanies] = useState<Epiphany[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
@@ -24,6 +27,7 @@ export default function Dashboard() {
 
   const fetchEpiphanies = async () => {
     try {
+      const supabase = createClient()
       const { data, error } = await supabase
         .from('epiphanies')
         .select('*')
@@ -42,15 +46,18 @@ export default function Dashboard() {
     e.preventDefault()
     
     if (!formData.title.trim() || !formData.content.trim()) return
+    if (!user) return
 
     try {
+      const supabase = createClient()
       const { error } = await supabase
         .from('epiphanies')
         .insert({
           title: formData.title.trim(),
           content: formData.content.trim(),
-          author_id: 'anonymous', // In a real app, this would be the authenticated user's ID
-          author_name: 'Anonymous', // In a real app, this would be the authenticated user's name
+          author_id: user.id,
+          author_name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'Anonymous',
+          author_avatar: user.user_metadata?.avatar_url || null,
           tags: formData.tags.split(',').map(tag => tag.trim()).filter(Boolean),
           likes_count: 0
         })
@@ -67,17 +74,47 @@ export default function Dashboard() {
   }
 
   const handleLike = async (epiphanyId: string) => {
+    if (!user) return
+    
     try {
-      // In a real app, you'd check if the user already liked this
-      const { error } = await supabase
-        .from('epiphanies')
-        .update({ likes_count: (epiphanies.find(e => e.id === epiphanyId)?.likes_count || 0) + 1 })
-        .eq('id', epiphanyId)
+      const supabase = createClient()
+      // Check if user already liked this
+      const { data: existingLike } = await supabase
+        .from('likes')
+        .select('*')
+        .eq('epiphany_id', epiphanyId)
+        .eq('user_id', user.id)
+        .single()
 
-      if (error) throw error
+      if (existingLike) {
+        // Unlike
+        await supabase
+          .from('likes')
+          .delete()
+          .eq('id', existingLike.id)
+        
+        await supabase
+          .from('epiphanies')
+          .update({ likes_count: Math.max(0, (epiphanies.find(e => e.id === epiphanyId)?.likes_count || 0) - 1) })
+          .eq('id', epiphanyId)
+      } else {
+        // Like
+        await supabase
+          .from('likes')
+          .insert({
+            epiphany_id: epiphanyId,
+            user_id: user.id
+          })
+        
+        await supabase
+          .from('epiphanies')
+          .update({ likes_count: (epiphanies.find(e => e.id === epiphanyId)?.likes_count || 0) + 1 })
+          .eq('id', epiphanyId)
+      }
+
       fetchEpiphanies()
     } catch (error) {
-      console.error('Error liking epiphany:', error)
+      console.error('Error handling like:', error)
     }
   }
 
@@ -94,6 +131,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen p-6">
+      <UserProfile />
       {/* Header */}
       <div className="max-w-6xl mx-auto mb-12">
         <div className="text-center">
@@ -103,23 +141,60 @@ export default function Dashboard() {
               Enlighten
             </h1>
           </div>
-          <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+          <p className="text-xl text-gray-600 max-w-2xl mx-auto mb-6">
             Share your moments of enlightenment and epiphany with the world. 
             Every insight has the power to inspire others.
           </p>
+          
+          {/* Authentication */}
+          <div className="flex items-center justify-center gap-4">
+            {user ? (
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  {user.user_metadata?.avatar_url && (
+                    <img 
+                      src={user.user_metadata.avatar_url} 
+                      alt="Profile" 
+                      className="w-8 h-8 rounded-full"
+                    />
+                  )}
+                  <span className="text-enlightenment-700 font-medium">
+                    {user.user_metadata?.full_name || user.email?.split('@')[0]}
+                  </span>
+                </div>
+                <button
+                  onClick={signOut}
+                  className="flex items-center gap-2 px-4 py-2 text-enlightenment-700 border border-enlightenment-300 rounded-lg hover:bg-enlightenment-50 transition-colors"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Sign Out
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={signInWithGoogle}
+                className="enlightenment-button inline-flex items-center"
+              >
+                <LogIn className="h-5 w-5 mr-2" />
+                Sign in with Google
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Add New Epiphany Button */}
-      <div className="max-w-6xl mx-auto mb-8 text-center">
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="enlightenment-button inline-flex items-center"
-        >
-          <Plus className="h-5 w-5 mr-2" />
-          Share Your Epiphany
-        </button>
-      </div>
+      {user && (
+        <div className="max-w-6xl mx-auto mb-8 text-center">
+          <button
+            onClick={() => setShowForm(!showForm)}
+            className="enlightenment-button inline-flex items-center"
+          >
+            <Plus className="h-5 w-5 mr-2" />
+            Share Your Epiphany
+          </button>
+        </div>
+      )}
 
       {/* New Epiphany Form */}
       {showForm && (
@@ -204,9 +279,15 @@ export default function Dashboard() {
                   </h3>
                   <button
                     onClick={() => handleLike(epiphany.id)}
-                    className="flex items-center gap-1 text-gray-500 hover:text-red-500 transition-colors"
+                    className={`flex items-center gap-1 transition-colors ${
+                      user && epiphanies.find(e => e.id === epiphany.id)?.likes_count === 0 
+                        ? 'text-gray-500 hover:text-red-500' 
+                        : 'text-red-500'
+                    }`}
+                    disabled={!user}
+                    title={!user ? 'Sign in to like' : ''}
                   >
-                    <Heart className="h-5 w-5" />
+                    <Heart className={`h-5 w-5 ${!user ? 'opacity-50' : ''}`} />
                     <span className="text-sm">{epiphany.likes_count}</span>
                   </button>
                 </div>
