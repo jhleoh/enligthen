@@ -14,6 +14,7 @@ export default function Home() {
   const { user, signInWithGoogle, signOut } = useAuth()
   const [epiphanies, setEpiphanies] = useState<Epiphany[]>([])
   const [loading, setLoading] = useState(true)
+  const [userLikes, setUserLikes] = useState<Set<string>>(new Set())
   const [formData, setFormData] = useState({
     title: '',
     content: '',
@@ -28,20 +29,75 @@ export default function Home() {
     fetchEpiphanies()
   }, [])
 
-  const fetchEpiphanies = async () => {
+  useEffect(() => {
+    if (user) {
+      fetchUserLikes()
+    } else {
+      setUserLikes(new Set())
+    }
+  }, [user])
+
+  const fetchUserLikes = async () => {
+    if (!user) return
+
     try {
       const supabase = createClient()
       const { data, error } = await supabase
+        .from('likes')
+        .select('epiphany_id')
+        .eq('user_id', user.id)
+
+      if (error) {
+        console.error('Error fetching user likes:', error)
+        return
+      }
+
+      const likedEpiphanyIds = new Set(data?.map(like => like.epiphany_id) || [])
+      setUserLikes(likedEpiphanyIds)
+    } catch (error) {
+      console.error('Error fetching user likes:', error)
+    }
+  }
+
+  const fetchEpiphanies = async () => {
+    try {
+      const supabase = createClient()
+      
+      // First, get all epiphanies
+      const { data: epiphaniesData, error: epiphaniesError } = await supabase
         .from('epiphanies')
         .select('*')
         .order('created_at', { ascending: false })
 
-      if (error) {
-        console.error('Error fetching epiphanies:', error)
+      if (epiphaniesError) {
+        console.error('Error fetching epiphanies:', epiphaniesError)
         return
       }
 
-      setEpiphanies(data || [])
+      // Then, get the actual likes count for each epiphany
+      const { data: likesData, error: likesError } = await supabase
+        .from('likes')
+        .select('epiphany_id')
+
+      if (likesError) {
+        console.error('Error fetching likes:', likesError)
+        return
+      }
+
+      // Calculate actual likes count for each epiphany
+      const likesCountMap = new Map<string, number>()
+      likesData?.forEach(like => {
+        const currentCount = likesCountMap.get(like.epiphany_id) || 0
+        likesCountMap.set(like.epiphany_id, currentCount + 1)
+      })
+
+      // Update epiphanies with accurate likes count
+      const epiphaniesWithAccurateCounts = epiphaniesData?.map(epiphany => ({
+        ...epiphany,
+        likes_count: likesCountMap.get(epiphany.id) || 0
+      })) || []
+
+      setEpiphanies(epiphaniesWithAccurateCounts)
     } catch (error) {
       console.error('Error fetching epiphanies:', error)
     } finally {
@@ -89,7 +145,21 @@ export default function Home() {
 
     try {
       const supabase = createClient()
-      const isLiked = epiphany.likes_count > 0
+      
+      // Check if user already liked this epiphany
+      const { data: existingLike, error: checkError } = await supabase
+        .from('likes')
+        .select('*')
+        .eq('epiphany_id', epiphany.id)
+        .eq('user_id', user.id)
+        .single()
+
+      if (checkError && checkError.code !== 'PGRST116') {
+        console.error('Error checking like status:', checkError)
+        return
+      }
+
+      const isLiked = !!existingLike
 
       if (isLiked) {
         // Unlike
@@ -104,11 +174,12 @@ export default function Home() {
           return
         }
 
-        setEpiphanies(epiphanies.map(e => 
-          e.id === epiphany.id 
-            ? { ...e, likes_count: Math.max(0, e.likes_count - 1) }
-            : e
-        ))
+        // Update user likes state
+        setUserLikes(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(epiphany.id)
+          return newSet
+        })
       } else {
         // Like
         const { error } = await supabase
@@ -123,12 +194,12 @@ export default function Home() {
           return
         }
 
-        setEpiphanies(epiphanies.map(e => 
-          e.id === epiphany.id 
-            ? { ...e, likes_count: e.likes_count + 1 }
-            : e
-        ))
+        // Update user likes state
+        setUserLikes(prev => new Set([...Array.from(prev), epiphany.id]))
       }
+
+      // Refresh epiphanies to get accurate counts
+      await fetchEpiphanies()
     } catch (error) {
       console.error('Error handling like:', error)
     }
@@ -142,6 +213,12 @@ export default function Home() {
 
   const handleDelete = (id: string) => {
     setEpiphanies(epiphanies.filter(e => e.id !== id))
+    // Remove from user likes if it was liked
+    setUserLikes(prev => {
+      const newSet = new Set(prev)
+      newSet.delete(id)
+      return newSet
+    })
   }
 
   const openModal = (epiphany: Epiphany, editing: boolean = false) => {
@@ -414,12 +491,12 @@ export default function Home() {
                         handleLike(epiphany)
                       }}
                       className={`flex items-center gap-1 px-3 py-1 rounded-full text-sm transition-colors ${
-                        epiphany.likes_count > 0
+                        userLikes.has(epiphany.id)
                           ? 'text-red-600 bg-red-50 hover:bg-red-100'
                           : 'text-gray-500 hover:text-red-600 hover:bg-red-50'
                       }`}
                     >
-                      <Heart className={`w-4 h-4 ${epiphany.likes_count > 0 ? 'fill-current' : ''}`} />
+                      <Heart className={`w-4 h-4 ${userLikes.has(epiphany.id) ? 'fill-current' : ''}`} />
                       {epiphany.likes_count}
                     </button>
                   </div>
