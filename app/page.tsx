@@ -1,25 +1,28 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { Heart, Tag, Plus, Edit, Trash2, Check, X, LogIn, LogOut, User } from 'lucide-react'
+import { useAuth } from '@/lib/auth-context'
 import { createClient } from '@/lib/supabase'
 import { Database } from '@/lib/supabase'
-import { Lightbulb, Plus, Heart, User, Calendar, Tag, LogIn, LogOut } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
-import { useAuth } from '@/lib/auth-context'
 import { UserProfile } from '@/components/user-profile'
+import { EpiphanyModal } from '@/components/epiphany-modal'
 
 type Epiphany = Database['public']['Tables']['epiphanies']['Row']
 
-export default function Dashboard() {
+export default function Home() {
   const { user, signInWithGoogle, signOut } = useAuth()
   const [epiphanies, setEpiphanies] = useState<Epiphany[]>([])
   const [loading, setLoading] = useState(true)
-  const [showForm, setShowForm] = useState(false)
   const [formData, setFormData] = useState({
     title: '',
     content: '',
-    tags: ''
+    tags: [] as string[]
   })
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [modalEpiphany, setModalEpiphany] = useState<Epiphany | null>(null)
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [isModalEditing, setIsModalEditing] = useState(false)
 
   useEffect(() => {
     fetchEpiphanies()
@@ -33,7 +36,11 @@ export default function Dashboard() {
         .select('*')
         .order('created_at', { ascending: false })
 
-      if (error) throw error
+      if (error) {
+        console.error('Error fetching epiphanies:', error)
+        return
+      }
+
       setEpiphanies(data || [])
     } catch (error) {
       console.error('Error fetching epiphanies:', error)
@@ -44,13 +51,12 @@ export default function Dashboard() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
-    if (!formData.title.trim() || !formData.content.trim()) return
     if (!user) return
 
+    setIsSubmitting(true)
     try {
       const supabase = createClient()
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('epiphanies')
         .insert({
           title: formData.title.trim(),
@@ -58,63 +64,136 @@ export default function Dashboard() {
           author_id: user.id,
           author_name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'Anonymous',
           author_avatar: user.user_metadata?.avatar_url || null,
-          tags: formData.tags.split(',').map(tag => tag.trim()).filter(Boolean),
+          tags: formData.tags,
           likes_count: 0
         })
+        .select()
+        .single()
 
-      if (error) throw error
+      if (error) {
+        console.error('Error creating epiphany:', error)
+        return
+      }
 
-      // Reset form and refresh data
-      setFormData({ title: '', content: '', tags: '' })
-      setShowForm(false)
-      fetchEpiphanies()
+      setEpiphanies([data, ...epiphanies])
+      setFormData({ title: '', content: '', tags: [] })
     } catch (error) {
       console.error('Error creating epiphany:', error)
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
-  const handleLike = async (epiphanyId: string) => {
+  const handleLike = async (epiphany: Epiphany) => {
     if (!user) return
-    
+
     try {
       const supabase = createClient()
-      // Check if user already liked this
-      const { data: existingLike } = await supabase
-        .from('likes')
-        .select('*')
-        .eq('epiphany_id', epiphanyId)
-        .eq('user_id', user.id)
-        .single()
+      const isLiked = epiphany.likes_count > 0
 
-      if (existingLike) {
+      if (isLiked) {
         // Unlike
-        await supabase
+        const { error } = await supabase
           .from('likes')
           .delete()
-          .eq('id', existingLike.id)
-        
-        await supabase
-          .from('epiphanies')
-          .update({ likes_count: Math.max(0, (epiphanies.find(e => e.id === epiphanyId)?.likes_count || 0) - 1) })
-          .eq('id', epiphanyId)
+          .eq('epiphany_id', epiphany.id)
+          .eq('user_id', user.id)
+
+        if (error) {
+          console.error('Error removing like:', error)
+          return
+        }
+
+        setEpiphanies(epiphanies.map(e => 
+          e.id === epiphany.id 
+            ? { ...e, likes_count: Math.max(0, e.likes_count - 1) }
+            : e
+        ))
       } else {
         // Like
-        await supabase
+        const { error } = await supabase
           .from('likes')
           .insert({
-            epiphany_id: epiphanyId,
+            epiphany_id: epiphany.id,
             user_id: user.id
           })
-        
-        await supabase
-          .from('epiphanies')
-          .update({ likes_count: (epiphanies.find(e => e.id === epiphanyId)?.likes_count || 0) + 1 })
-          .eq('id', epiphanyId)
-      }
 
-      fetchEpiphanies()
+        if (error) {
+          console.error('Error adding like:', error)
+          return
+        }
+
+        setEpiphanies(epiphanies.map(e => 
+          e.id === epiphany.id 
+            ? { ...e, likes_count: e.likes_count + 1 }
+            : e
+        ))
+      }
     } catch (error) {
       console.error('Error handling like:', error)
+    }
+  }
+
+  const handleUpdate = (updatedEpiphany: Epiphany) => {
+    setEpiphanies(epiphanies.map(e => 
+      e.id === updatedEpiphany.id ? updatedEpiphany : e
+    ))
+  }
+
+  const handleDelete = (id: string) => {
+    setEpiphanies(epiphanies.filter(e => e.id !== id))
+  }
+
+  const openModal = (epiphany: Epiphany, editing: boolean = false) => {
+    setModalEpiphany(epiphany)
+    setIsModalEditing(editing)
+    setIsModalOpen(true)
+  }
+
+  const closeModal = () => {
+    setIsModalOpen(false)
+    setModalEpiphany(null)
+    setIsModalEditing(false)
+  }
+
+  const toggleModalEdit = () => {
+    setIsModalEditing(!isModalEditing)
+  }
+
+  const addTag = (tag: string) => {
+    if (tag.trim() && !formData.tags.includes(tag.trim())) {
+      setFormData(prev => ({
+        ...prev,
+        tags: [...prev.tags, tag.trim()]
+      }))
+    }
+  }
+
+  const removeTag = (tagToRemove: string) => {
+    setFormData(prev => ({
+      ...prev,
+      tags: prev.tags.filter(tag => tag !== tagToRemove)
+    }))
+  }
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString)
+    const now = new Date()
+    const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60)
+    
+    if (diffInHours < 1) {
+      return 'Just now'
+    } else if (diffInHours < 24) {
+      const hours = Math.floor(diffInHours)
+      return `${hours} hour${hours > 1 ? 's' : ''} ago`
+    } else if (diffInHours < 48) {
+      return 'Yesterday'
+    } else {
+      return date.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+      })
     }
   }
 
@@ -122,8 +201,8 @@ export default function Dashboard() {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-enlightenment-500 mx-auto"></div>
-          <p className="mt-4 text-enlightenment-600 text-lg">Loading enlightenments...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-enlightenment-500 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading enlightenments...</p>
         </div>
       </div>
     )
@@ -132,82 +211,68 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen p-6">
       <UserProfile />
+      
       {/* Header */}
       <div className="max-w-6xl mx-auto mb-12">
-        <div className="text-center">
-          <div className="flex items-center justify-center mb-4">
-            <Lightbulb className="h-12 w-12 text-enlightenment-500 mr-3 animate-glow" />
-            <h1 className="text-5xl font-bold bg-gradient-to-r from-enlightenment-600 to-primary-600 bg-clip-text text-transparent">
-              Enlighten
-            </h1>
-          </div>
-          <p className="text-xl text-gray-600 max-w-2xl mx-auto mb-6">
-            Share your moments of enlightenment and epiphany with the world. 
-            Every insight has the power to inspire others.
+        <div className="text-center mb-8">
+          <h1 className="text-5xl font-bold text-enlightenment-700 mb-4">
+            Enlighten
+          </h1>
+          <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+            Share your moments of clarity, epiphanies, and breakthroughs. 
+            Connect with others through shared wisdom and insights.
           </p>
-          
-          {/* Authentication */}
-          <div className="flex items-center justify-center gap-4">
-            {user ? (
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  {user.user_metadata?.avatar_url && (
-                    <img 
-                      src={user.user_metadata.avatar_url} 
-                      alt="Profile" 
-                      className="w-8 h-8 rounded-full"
-                    />
-                  )}
-                  <span className="text-enlightenment-700 font-medium">
-                    {user.user_metadata?.full_name || user.email?.split('@')[0]}
-                  </span>
-                </div>
-                <button
-                  onClick={signOut}
-                  className="flex items-center gap-2 px-4 py-2 text-enlightenment-700 border border-enlightenment-300 rounded-lg hover:bg-enlightenment-50 transition-colors"
-                >
-                  <LogOut className="h-4 w-4" />
-                  Sign Out
-                </button>
+        </div>
+
+        {/* Auth Section */}
+        <div className="flex justify-center items-center gap-4 mb-8">
+          {user ? (
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3">
+                {user.user_metadata?.avatar_url ? (
+                  <img
+                    src={user.user_metadata.avatar_url}
+                    alt={user.user_metadata?.full_name || 'User'}
+                    className="w-10 h-10 rounded-full"
+                  />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-enlightenment-100 flex items-center justify-center">
+                    <User className="w-5 h-5 text-enlightenment-600" />
+                  </div>
+                )}
+                <span className="text-gray-700 font-medium">
+                  {user.user_metadata?.full_name || user.email?.split('@')[0] || 'Anonymous'}
+                </span>
               </div>
-            ) : (
               <button
-                onClick={signInWithGoogle}
-                className="enlightenment-button inline-flex items-center"
+                onClick={signOut}
+                className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
               >
-                <LogIn className="h-5 w-5 mr-2" />
-                Sign in with Google
+                <LogOut className="w-4 h-4" />
+                Sign Out
               </button>
-            )}
-          </div>
+            </div>
+          ) : (
+            <button
+              onClick={signInWithGoogle}
+              className="enlightenment-button flex items-center gap-2"
+            >
+              <LogIn className="w-5 h-5" />
+              Sign in with Google
+            </button>
+          )}
         </div>
-      </div>
 
-      {/* Add New Epiphany Button */}
-      {user && (
-        <div className="max-w-6xl mx-auto mb-8 text-center">
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="enlightenment-button inline-flex items-center"
-          >
-            <Plus className="h-5 w-5 mr-2" />
-            Share Your Epiphany
-          </button>
-        </div>
-      )}
-
-      {/* New Epiphany Form */}
-      {showForm && (
-        <div className="max-w-2xl mx-auto mb-12 animate-slide-up">
-          <div className="enlightenment-card p-8">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">
-              Share Your Enlightenment
+        {/* Add New Epiphany Form */}
+        {user && (
+          <div className="enlightenment-card p-8 mb-12">
+            <h2 className="text-2xl font-semibold text-enlightenment-700 mb-6">
+              Share Your Epiphany
             </h2>
+            
             <form onSubmit={handleSubmit} className="space-y-6">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Title *
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-4">Title</label>
                 <input
                   type="text"
                   value={formData.title}
@@ -217,107 +282,146 @@ export default function Dashboard() {
                   required
                 />
               </div>
+              
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Your Epiphany *
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-4">Content</label>
                 <textarea
                   value={formData.content}
                   onChange={(e) => setFormData({ ...formData, content: e.target.value })}
-                  className="enlightenment-input min-h-[120px] resize-none"
-                  placeholder="Share the insight that changed your perspective..."
+                  className="enlightenment-input min-h-[120px]"
+                  placeholder="Share the details of your enlightenment..."
                   required
                 />
               </div>
+              
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Tags (optional)
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-4">Tags</label>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {formData.tags.map((tag, index) => (
+                    <span
+                      key={index}
+                      className="bg-enlightenment-100 text-enlightenment-700 px-3 py-1 rounded-full text-base flex items-center gap-1"
+                    >
+                      {tag}
+                      <button
+                        type="button"
+                        onClick={() => removeTag(tag)}
+                        className="text-enlightenment-500 hover:text-enlightenment-700 ml-1"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
                 <input
                   type="text"
-                  value={formData.tags}
-                  onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
+                  placeholder="Add a tag and press Enter"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      const target = e.target as HTMLInputElement
+                      addTag(target.value)
+                      target.value = ''
+                    }
+                  }}
                   className="enlightenment-input"
-                  placeholder="wisdom, life, philosophy, science (comma separated)"
                 />
               </div>
-              <div className="flex gap-4">
-                <button
-                  type="submit"
-                  className="enlightenment-button flex-1"
-                >
-                  Share Enlightenment
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowForm(false)}
-                  className="flex-1 px-6 py-3 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
+              
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="enlightenment-button flex items-center gap-2 disabled:opacity-50"
+              >
+                <Plus className="w-5 h-5" />
+                {isSubmitting ? 'Sharing...' : 'Share Epiphany'}
+              </button>
             </form>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* Epiphanies Grid */}
+      {/* Epiphanies List */}
       <div className="max-w-6xl mx-auto">
+        <h2 className="text-3xl font-bold text-enlightenment-700 mb-8 text-center">
+          Recent Epiphanies
+        </h2>
+        
         {epiphanies.length === 0 ? (
-          <div className="text-center py-16">
-            <Lightbulb className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-gray-500 mb-2">No epiphanies yet</h3>
-            <p className="text-gray-400">Be the first to share your enlightenment!</p>
+          <div className="text-center py-12 col-span-full">
+            <div className="text-6xl mb-4">💡</div>
+            <h3 className="text-xl font-semibold text-gray-600 mb-2">No epiphanies yet</h3>
+            <p className="text-gray-500">
+              {user ? 'Be the first to share your enlightenment!' : 'Sign in to share your first epiphany!'}
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {epiphanies.map((epiphany) => (
-              <div key={epiphany.id} className="enlightenment-card p-6 animate-fade-in">
-                <div className="flex items-start justify-between mb-4">
-                  <h3 className="text-xl font-bold text-gray-800 leading-tight">
+              <div 
+                key={epiphany.id} 
+                className="enlightenment-card p-8 cursor-pointer hover:scale-[1.02] transition-transform duration-200"
+                onClick={() => openModal(epiphany, false)}
+              >
+                <div className="flex justify-between items-start mb-8">
+                  <h3 className="text-2xl font-semibold text-enlightenment-700 line-clamp-2">
                     {epiphany.title}
                   </h3>
-                  <button
-                    onClick={() => handleLike(epiphany.id)}
-                    className={`flex items-center gap-1 transition-colors ${
-                      user && epiphanies.find(e => e.id === epiphany.id)?.likes_count === 0 
-                        ? 'text-gray-500 hover:text-red-500' 
-                        : 'text-red-500'
-                    }`}
-                    disabled={!user}
-                    title={!user ? 'Sign in to like' : ''}
-                  >
-                    <Heart className={`h-5 w-5 ${!user ? 'opacity-50' : ''}`} />
-                    <span className="text-sm">{epiphany.likes_count}</span>
-                  </button>
+                  {user && epiphany.author_id === user.id && (
+                    <div className="flex gap-2 ml-4">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          openModal(epiphany, true)
+                        }}
+                        className="p-2 text-enlightenment-600 hover:text-enlightenment-700 hover:bg-enlightenment-50 rounded-lg transition-colors"
+                        title="Edit"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
                 
-                <p className="text-gray-600 mb-4 leading-relaxed">
+                <p className="text-gray-700 mb-8 leading-relaxed text-lg line-clamp-4">
                   {epiphany.content}
                 </p>
                 
                 {epiphany.tags && epiphany.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mb-4">
+                  <div className="flex flex-wrap gap-2 mb-8">
                     {epiphany.tags.map((tag, index) => (
                       <span
                         key={index}
-                        className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-enlightenment-100 text-enlightenment-800"
+                        className="bg-enlightenment-100 text-enlightenment-700 px-3 py-1 rounded-full text-base flex items-center gap-1"
                       >
-                        <Tag className="h-3 w-3 mr-1" />
+                        <Tag className="w-3 h-3" />
                         {tag}
                       </span>
                     ))}
                   </div>
                 )}
                 
-                <div className="flex items-center justify-between text-sm text-gray-500">
-                  <div className="flex items-center gap-2">
-                    <User className="h-4 w-4" />
-                    <span>{epiphany.author_name}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Calendar className="h-4 w-4" />
-                    <span>{formatDistanceToNow(new Date(epiphany.created_at), { addSuffix: true })}</span>
+                <div className="pt-4 border-t border-gray-100">
+                  <div className="flex justify-between items-center mb-4">
+                    <div className="flex items-center gap-2 text-sm text-gray-500">
+                      <span>{epiphany.author_name || 'Anonymous'}</span>
+                      <span>•</span>
+                      <span>{formatDate(epiphany.created_at)}</span>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleLike(epiphany)
+                      }}
+                      className={`flex items-center gap-1 px-3 py-1 rounded-full text-sm transition-colors ${
+                        epiphany.likes_count > 0
+                          ? 'text-red-600 bg-red-50 hover:bg-red-100'
+                          : 'text-gray-500 hover:text-red-600 hover:bg-red-50'
+                      }`}
+                    >
+                      <Heart className={`w-4 h-4 ${epiphany.likes_count > 0 ? 'fill-current' : ''}`} />
+                      {epiphany.likes_count}
+                    </button>
                   </div>
                 </div>
               </div>
@@ -325,6 +429,18 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* Modal */}
+      <EpiphanyModal
+        epiphany={modalEpiphany}
+        isOpen={isModalOpen}
+        onClose={closeModal}
+        onUpdate={handleUpdate}
+        onDelete={handleDelete}
+        isEditing={isModalEditing}
+        onEditToggle={toggleModalEdit}
+        user={user}
+      />
     </div>
   )
 }
