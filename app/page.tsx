@@ -152,9 +152,9 @@ export default function Home() {
         .select('*')
         .eq('epiphany_id', epiphany.id)
         .eq('user_id', user.id)
-        .single()
+        .maybeSingle()
 
-      if (checkError && checkError.code !== 'PGRST116') {
+      if (checkError) {
         console.error('Error checking like status:', checkError)
         return
       }
