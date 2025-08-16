@@ -115,7 +115,7 @@ export default function Home() {
       const { data, error } = await supabase
         .from('epiphanies')
         .insert({
-          title: formData.title.trim(),
+          title: formData.title.trim() || null,
           content: formData.content.trim(),
           author_id: user.id,
           author_name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'Anonymous',
@@ -349,14 +349,13 @@ export default function Home() {
             
             <form onSubmit={handleSubmit} className="space-y-6">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-4">Title</label>
+                <label className="block text-sm font-medium text-gray-700 mb-4">Title <span className="text-gray-400 text-xs">(optional)</span></label>
                 <input
                   type="text"
                   value={formData.title}
                   onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                   className="enlightenment-input"
-                  placeholder="What did you discover?"
-                  required
+                  placeholder="What did you discover? (optional)"
                 />
               </div>
               

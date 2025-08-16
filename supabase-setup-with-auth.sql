@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 -- Create epiphanies table with updated structure
 CREATE TABLE IF NOT EXISTS epiphanies (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  title TEXT NOT NULL,
+  title TEXT,
   content TEXT NOT NULL,
   author_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
   author_name TEXT NOT NULL,

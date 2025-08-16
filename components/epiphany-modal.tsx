@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { X, Edit, Save, Heart, Tag, User, Calendar } from 'lucide-react'
+import { X, Edit, Save, Heart, Tag, User, Calendar, Trash } from 'lucide-react'
 import { createClient } from '@/lib/supabase'
 import { Database } from '@/lib/supabase'
 
@@ -158,7 +158,7 @@ export function EpiphanyModal({
                   className="p-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
                   title="Delete"
                 >
-                  <X className="w-5 h-5" />
+                  <Trash className="w-5 h-5" />
                 </button>
               </>
             )}

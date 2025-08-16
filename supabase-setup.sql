@@ -4,7 +4,7 @@
 -- Create epiphanies table
 CREATE TABLE epiphanies (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  title TEXT NOT NULL,
+  title TEXT,
   content TEXT NOT NULL,
   author_id TEXT NOT NULL,
   author_name TEXT NOT NULL,
